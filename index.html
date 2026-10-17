@@ -7,6 +7,10 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="IPTV">
 <title>IPTV Player</title>
+<script>
+// GitHub Pages yalnızca https sunar; http IPTV sunucuları için asıl adres http olanıdır
+if (location.hostname === 'adnsahin.github.io') location.replace('http://ipadplayer.surge.sh/');
+</script>
 <style>
 /* iOS 10 Safari uyumlu: yalnızca flexbox, CSS değişkeni yok */
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -181,7 +185,9 @@ video { width: 100%; height: 100%; background: #000; display: block; }
 (function () {
   'use strict';
 
-  var PAGE = 150;           // tek seferde çizilen kanal sayısı (eski iPad'ler için)
+  // http IPTV sunucuları yalnızca http sayfadan erişilebilir (https sayfada Safari engeller)
+  var HTTP_HOME = 'http://ipadplayer.surge.sh/';
+  var PAGE = 150;          // tek seferde çizilen kanal sayısı (eski iPad'ler için)
   var FAV = '★ Favoriler', ALL = 'Tümü', RECENT = 'Son izlenen';
 
   var store = {
@@ -281,17 +287,55 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       if (!err) { cb(null, text); return; }
       if (err !== 'net') { cb(err); return; }
       if (proxy) { viaProxy(); return; }
-      cb('Liste indirilemedi: tarayıcı engelledi (' + (mixed ? 'https sayfada http liste' : 'sunucu CORS izni vermiyor') +
-        '). Aşağıdaki "Proxy adresi" alanını doldurun veya "Metin yapıştır" seçeneğini kullanın.');
+      cb(mixed
+        ? 'Liste indirilemedi: liste http, bu sayfa https olduğu için Safari engelliyor. Oynatıcıyı ' + HTTP_HOME + ' adresinden açın.'
+        : 'Liste indirilemedi: sunucu CORS izni vermiyor. "Proxy adresi" alanını doldurun veya "Metin yapıştır" seçeneğini kullanın.');
     });
   }
 
-  function playlistUrl(p) {
-    if (p.type === 'xt') {
-      return p.server.replace(/\/+$/, '') + '/get.php?username=' + encodeURIComponent(p.user) +
-        '&password=' + encodeURIComponent(p.pass) + '&type=m3u_plus&output=m3u8';
+  // get.php?username=..&password=.. biçimindeki M3U adresleri aslında Xtream hesabıdır
+  function xtreamFromUrl(u) {
+    var m = /^(https?:\/\/[^\/?#]+)\/get\.php\?(.*)$/i.exec(u || '');
+    if (!m) return null;
+    var q = {}, parts = m[2].split('&');
+    for (var i = 0; i < parts.length; i++) {
+      var kv = parts[i].split('=');
+      try { q[kv[0]] = decodeURIComponent((kv[1] || '').replace(/\+/g, ' ')); } catch (e) { q[kv[0]] = kv[1] || ''; }
     }
-    return p.url;
+    return q.username ? { server: m[1], user: q.username, pass: q.password || '' } : null;
+  }
+
+  // Xtream: get.php çoğu sunucuda CORS izni vermez, player_api.php ise verir.
+  // Kanalları JSON API'den alıp M3U metnine çeviriyoruz (önbellek ve ayrıştırma aynı kalsın).
+  function fetchXtream(x, cb) {
+    var base = x.server.replace(/\/+$/, '');
+    var api = base + '/player_api.php?username=' + encodeURIComponent(x.user) + '&password=' + encodeURIComponent(x.pass);
+    function getJson(action, next) {
+      fetchText(api + (action ? '&action=' + action : ''), function (err, text) {
+        if (err) { cb(err); return; }
+        var data;
+        try { data = JSON.parse(text); } catch (e) { cb('Sunucudan geçersiz yanıt geldi.'); return; }
+        next(data);
+      });
+    }
+    getJson('', function (info) {
+      if (!info || !info.user_info || String(info.user_info.auth) !== '1') { cb('Kullanıcı adı veya şifre hatalı.'); return; }
+      if (info.user_info.status && info.user_info.status !== 'Active') { cb('Hesap durumu: ' + info.user_info.status); return; }
+      getJson('get_live_categories', function (cats) {
+        var catName = {};
+        for (var i = 0; cats && i < cats.length; i++) catName[cats[i].category_id] = cats[i].category_name;
+        getJson('get_live_streams', function (streams) {
+          var out = ['#EXTM3U'], pre = base + '/live/' + encodeURIComponent(x.user) + '/' + encodeURIComponent(x.pass) + '/';
+          for (var j = 0; streams && j < streams.length; j++) {
+            var s = streams[j], nm = String(s.name || 'Adsız').replace(/[\r\n]/g, ' ');
+            out.push('#EXTINF:-1 tvg-logo="' + String(s.stream_icon || '').replace(/"/g, '') + '" group-title="' +
+              String(catName[s.category_id] || 'Diğer').replace(/"/g, "'") + '",' + nm);
+            out.push(pre + s.stream_id + '.m3u8');
+          }
+          cb(null, out.join('\n'));
+        });
+      });
+    });
   }
 
   function loadPlaylist(p, done) {
@@ -310,14 +354,16 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       done(null, state.channels.length);
     }
     if (p.type === 'txt') { apply(p.text); return; }
-    fetchText(playlistUrl(p), function (err, text) {
+    function got(err, text) {
       if (err) {
         var cached = store.get('cache_' + p.id, null);
-        if (cached) { apply(cached); done(err + ' (önbellekteki kopya açıldı)'); return; }
+        if (cached) { var realDone = done; done = function () {}; apply(cached); realDone(err + ' (önbellekteki kopya açıldı)'); return; }
         done(err); return;
       }
       apply(text);
-    });
+    }
+    var xt = p.type === 'xt' ? p : xtreamFromUrl(p.url);
+    if (xt) fetchXtream(xt, got); else fetchText(p.url, got);
   }
 
   /* ---------- gruplar ---------- */
