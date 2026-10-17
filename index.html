@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="IPTV">
+<title>IPTV Player</title>
+<style>
+/* iOS 10 Safari uyumlu: yalnızca flexbox, CSS değişkeni yok */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: #111; color: #eee;
+  font-family: -apple-system, "Helvetica Neue", Arial, sans-serif; font-size: 15px; overflow: hidden; }
+button, input, select, textarea { font-family: inherit; font-size: 15px; }
+button { background: #2a2a2a; color: #eee; border: 1px solid #3a3a3a; border-radius: 6px;
+  padding: 8px 12px; cursor: pointer; }
+button.primary { background: #1e6fd9; border-color: #1e6fd9; color: #fff; }
+button.danger { background: #8a2020; border-color: #8a2020; }
+input[type=text], input[type=url], input[type=password], textarea, select {
+  background: #1d1d1d; color: #eee; border: 1px solid #3a3a3a; border-radius: 6px; padding: 8px 10px;
+  width: 100%; -webkit-appearance: none; }
+textarea { height: 140px; font-family: Menlo, monospace; font-size: 12px; }
+
+#app { display: -webkit-box; display: -webkit-flex; display: flex; height: 100%; }
+#side { width: 210px; background: #181818; border-right: 1px solid #262626;
+  display: -webkit-flex; display: flex; -webkit-flex-direction: column; flex-direction: column; }
+#side h1 { font-size: 17px; margin: 0; padding: 14px 12px 10px; color: #fff; }
+#groups { -webkit-flex: 1; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.grp { padding: 11px 12px; border-bottom: 1px solid #222; color: #bbb; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.grp.on { background: #1e6fd9; color: #fff; }
+.grp .n { float: right; color: #888; font-size: 12px; }
+.grp.on .n { color: #dce8ff; }
+#sideBtns { padding: 8px; border-top: 1px solid #262626; }
+#sideBtns button { width: 100%; }
+
+#main { -webkit-flex: 1; flex: 1; display: -webkit-flex; display: flex;
+  -webkit-flex-direction: column; flex-direction: column; min-width: 0; }
+#playerWrap { background: #000; position: relative; height: 45%; }
+#playerWrap.big { height: 100%; }
+video { width: 100%; height: 100%; background: #000; display: block; }
+#nowBar { display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
+  padding: 6px 8px; background: #1a1a1a; border-bottom: 1px solid #262626; }
+#nowName { -webkit-flex: 1; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 8px; font-weight: 600; }
+#nowBar button { margin-left: 6px; padding: 6px 10px; }
+#msg { position: absolute; left: 0; right: 0; top: 50%; margin-top: -20px; text-align: center;
+  color: #ccc; padding: 0 20px; pointer-events: none; }
+
+#tools { padding: 8px; display: -webkit-flex; display: flex; border-bottom: 1px solid #262626; }
+#search { -webkit-flex: 1; flex: 1; }
+#list { -webkit-flex: 1; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.ch { display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
+  padding: 7px 10px; border-bottom: 1px solid #1f1f1f; }
+.ch.on { background: #16325c; }
+.ch img, .ch .ph { width: 44px; height: 30px; margin-right: 10px; background: #222; border-radius: 3px;
+  object-fit: contain; -webkit-flex-shrink: 0; flex-shrink: 0; }
+.ch .t { -webkit-flex: 1; flex: 1; min-width: 0; }
+.ch .t b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch .t small { color: #888; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.ch .fav { font-size: 22px; color: #555; padding: 0 6px 0 12px; }
+.ch .fav.y { color: #f5c518; }
+#more { text-align: center; padding: 14px; color: #888; }
+.empty { padding: 30px 20px; color: #888; text-align: center; line-height: 1.5; }
+
+/* Ayarlar paneli */
+#setup { position: fixed; left: 0; top: 0; right: 0; bottom: 0; background: rgba(0,0,0,.75);
+  display: none; z-index: 10; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+#setup.show { display: block; }
+#setupBox { background: #1b1b1b; max-width: 620px; margin: 30px auto; border-radius: 10px; padding: 16px 18px; }
+#setupBox h2 { margin: 0 0 12px; font-size: 18px; }
+#setupBox h3 { margin: 18px 0 8px; font-size: 14px; color: #9ab; text-transform: uppercase; letter-spacing: .5px; }
+.row { margin-bottom: 8px; }
+.row label { display: block; color: #999; font-size: 12px; margin-bottom: 3px; }
+.btns { margin-top: 8px; }
+.btns button { margin-right: 6px; margin-bottom: 6px; }
+.tabs { margin-bottom: 10px; }
+.tabs button { margin-right: 4px; }
+.tabs button.on { background: #1e6fd9; border-color: #1e6fd9; color: #fff; }
+.pane { display: none; }
+.pane.on { display: block; }
+.pl { display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid #2a2a2a; }
+.pl span { -webkit-flex: 1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl span.cur { color: #6fb0ff; font-weight: 600; }
+.pl button { margin-left: 6px; padding: 5px 9px; font-size: 13px; }
+.note { color: #888; font-size: 12px; line-height: 1.5; margin-top: 6px; }
+#status { margin-top: 10px; color: #f5c518; min-height: 18px; }
+
+/* Dikey (portre) iPad: grup listesi üstte yatay şerit olur */
+@media (max-width: 700px), (orientation: portrait) {
+  #app { -webkit-flex-direction: column; flex-direction: column; }
+  #side { width: auto; border-right: 0; border-bottom: 1px solid #262626; -webkit-flex-direction: row; flex-direction: row;
+    -webkit-align-items: center; align-items: center; }
+  #side h1 { display: none; }
+  #groups { display: -webkit-flex; display: flex; overflow-x: auto; overflow-y: hidden; }
+  .grp { border-bottom: 0; border-right: 1px solid #222; -webkit-flex-shrink: 0; flex-shrink: 0; }
+  .grp .n { float: none; margin-left: 6px; }
+  #sideBtns { border-top: 0; }
+  #sideBtns button { width: auto; }
+  #playerWrap { height: 38%; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <h1>IPTV</h1>
+    <div id="groups"></div>
+    <div id="sideBtns"><button id="btnSetup">&#9881; Listeler</button></div>
+  </div>
+  <div id="main">
+    <div id="playerWrap">
+      <video id="video" controls playsinline webkit-playsinline preload="none"></video>
+      <div id="msg">Bir kanal seçin</div>
+    </div>
+    <div id="nowBar">
+      <button id="btnPrev">&#9664;</button>
+      <button id="btnNext">&#9654;</button>
+      <div id="nowName">—</div>
+      <button id="btnBig">Büyüt</button>
+      <button id="btnFull">Tam ekran</button>
+    </div>
+    <div id="tools">
+      <input type="text" id="search" placeholder="Kanal ara..." autocomplete="off" autocorrect="off" autocapitalize="off">
+    </div>
+    <div id="list"></div>
+  </div>
+</div>
+
+<div id="setup">
+  <div id="setupBox">
+    <h2>Oynatma Listeleri</h2>
+    <div id="plList"></div>
+
+    <h3>Yeni liste ekle</h3>
+    <div class="tabs">
+      <button data-p="pUrl" class="on">M3U adresi</button>
+      <button data-p="pXt">Xtream Codes</button>
+      <button data-p="pTxt">Metin yapıştır</button>
+    </div>
+    <div class="row"><label>Liste adı</label><input type="text" id="plName" placeholder="Örn: Evdeki liste"></div>
+
+    <div class="pane on" id="pUrl">
+      <div class="row"><label>M3U / M3U8 adresi</label>
+        <input type="url" id="plUrl" placeholder="http://ornek.com/liste.m3u" autocapitalize="off" autocorrect="off"></div>
+    </div>
+    <div class="pane" id="pXt">
+      <div class="row"><label>Sunucu (port dahil)</label>
+        <input type="url" id="xtServer" placeholder="http://sunucu.com:8080" autocapitalize="off" autocorrect="off"></div>
+      <div class="row"><label>Kullanıcı adı</label><input type="text" id="xtUser" autocapitalize="off" autocorrect="off"></div>
+      <div class="row"><label>Şifre</label><input type="password" id="xtPass"></div>
+    </div>
+    <div class="pane" id="pTxt">
+      <div class="row"><label>#EXTM3U içeriği</label><textarea id="plText" placeholder="#EXTM3U&#10;#EXTINF:-1 group-title=&quot;Haber&quot;,Kanal adı&#10;http://.../kanal.m3u8"></textarea></div>
+    </div>
+    <div class="btns">
+      <button class="primary" id="btnAdd">Ekle ve yükle</button>
+      <button id="btnClose">Kapat</button>
+    </div>
+    <div id="status"></div>
+    <div class="note">
+      Not: iPad yalnızca HLS (.m3u8) ve MP4 yayınlarını doğrudan oynatır. .ts (MPEG-TS) linkli
+      Xtream listelerinde uygulama linkleri otomatik olarak .m3u8'e çevirir.<br>
+      Adresten yükleme başarısız olursa (CORS / https engeli), listeyi tarayıcıda açıp içeriği
+      "Metin yapıştır" sekmesine yapıştırın.<br>
+      Ana ekrana eklemek için: Safari &rarr; Paylaş &rarr; Ana Ekrana Ekle.
+    </div>
+  </div>
+</div>
+
+<script>
+/* ES5 — iOS 10 Safari'de transpile gerektirmeden çalışır */
+(function () {
+  'use strict';
+
+  var PAGE = 150;           // tek seferde çizilen kanal sayısı (eski iPad'ler için)
+  var FAV = '★ Favoriler', ALL = 'Tümü', RECENT = 'Son izlenen';
+
+  var store = {
+    get: function (k, d) {
+      try { var v = localStorage.getItem('iptv_' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; }
+    },
+    set: function (k, v) {
+      try { localStorage.setItem('iptv_' + k, JSON.stringify(v)); return true; } catch (e) { return false; }
+    }
+  };
+
+  var state = {
+    playlists: store.get('playlists', []),   // {id, name, type, url, text}
+    current: store.get('current', null),
+    favs: store.get('favs', {}),             // url -> 1
+    recent: store.get('recent', []),         // url listesi
+    lastGroup: store.get('lastGroup', ALL),
+    channels: [],
+    filtered: [],
+    shown: 0,
+    group: ALL,
+    playing: null
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  function fold(s) {  // Türkçe karakterlere duyarsız arama
+    return String(s).toLocaleLowerCase()
+      .replace(/̇/g, '').replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g')
+      .replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c');
+  }
+  function status(t) { $('status').textContent = t || ''; }
+
+  /* ---------- M3U ayrıştırma ---------- */
+  function attr(line, name) {
+    var m = new RegExp(name + '="([^"]*)"', 'i').exec(line);
+    return m ? m[1] : '';
+  }
+  function parseM3U(text, fixTs) {
+    var lines = text.split(/\r?\n/), out = [], info = null, grp = '';
+    for (var i = 0; i < lines.length; i++) {
+      var l = lines[i].trim();
+      if (!l) continue;
+      if (l.indexOf('#EXTINF') === 0) {
+        var comma = l.lastIndexOf('",');
+        var name = comma > -1 ? l.slice(comma + 2) : l.slice(l.indexOf(',') + 1);
+        info = {
+          name: name.trim() || attr(l, 'tvg-name') || 'Adsız',
+          logo: attr(l, 'tvg-logo'),
+          group: attr(l, 'group-title') || grp
+        };
+      } else if (l.indexOf('#EXTGRP:') === 0) {
+        grp = l.slice(8).trim();
+        if (info && !info.group) info.group = grp;
+      } else if (l.charAt(0) !== '#') {
+        var url = l;
+        if (fixTs && /\/live\/[^\/]+\/[^\/]+\/\d+\.ts(\?|$)/.test(url)) url = url.replace(/\.ts(\?|$)/, '.m3u8$1');
+        var c = info || { name: url.split('/').pop(), logo: '', group: grp };
+        c.url = url;
+        c.group = c.group || 'Diğer';
+        c.key = fold(c.name);
+        out.push(c);
+        info = null;
+      }
+    }
+    return out;
+  }
+
+  /* ---------- yükleme ---------- */
+  function fetchText(url, cb) {
+    var x = new XMLHttpRequest();
+    x.open('GET', url, true);
+    x.timeout = 45000;
+    x.onload = function () {
+      if (x.status >= 200 && x.status < 300 && x.responseText) cb(null, x.responseText);
+      else cb('Sunucu hata döndü (' + x.status + ')');
+    };
+    x.onerror = function () {
+      var hint = (location.protocol === 'https:' && url.indexOf('http:') === 0)
+        ? ' Sayfa https, liste http — Safari bunu engeller. Sayfayı http üzerinden açın veya metin yapıştırın.'
+        : ' Sunucu CORS izni vermiyor olabilir; "Metin yapıştır" seçeneğini deneyin.';
+      cb('Liste indirilemedi.' + hint);
+    };
+    x.ontimeout = function () { cb('Zaman aşımı.'); };
+    x.send();
+  }
+
+  function playlistUrl(p) {
+    if (p.type === 'xt') {
+      return p.server.replace(/\/+$/, '') + '/get.php?username=' + encodeURIComponent(p.user) +
+        '&password=' + encodeURIComponent(p.pass) + '&type=m3u_plus&output=m3u8';
+    }
+    return p.url;
+  }
+
+  function loadPlaylist(p, done) {
+    function apply(text) {
+      if (text.indexOf('#EXT') === -1) { done('Bu bir M3U listesi gibi görünmüyor.'); return; }
+      // arka plan yenilemesinde liste değişmediyse ekranı sıfırlama
+      if (p.type !== 'txt' && state.current === p.id && state.channels.length && store.get('cache_' + p.id, null) === text) {
+        done(null, state.channels.length); return;
+      }
+      state.channels = parseM3U(text, p.type === 'xt' || p.fixTs !== false);
+      state.current = p.id; store.set('current', p.id);
+      // büyük listeleri cihazda önbelleğe al (sığarsa)
+      if (p.type !== 'txt') store.set('cache_' + p.id, text);
+      buildGroups();
+      setGroup(state.group === FAV || state.group === RECENT ? state.group : (state.lastGroup || ALL));
+      done(null, state.channels.length);
+    }
+    if (p.type === 'txt') { apply(p.text); return; }
+    fetchText(playlistUrl(p), function (err, text) {
+      if (err) {
+        var cached = store.get('cache_' + p.id, null);
+        if (cached) { apply(cached); done(err + ' (önbellekteki kopya açıldı)'); return; }
+        done(err); return;
+      }
+      apply(text);
+    });
+  }
+
+  /* ---------- gruplar ---------- */
+  function buildGroups() {
+    var counts = {}, order = [];
+    for (var i = 0; i < state.channels.length; i++) {
+      var g = state.channels[i].group;
+      if (!counts[g]) { counts[g] = 0; order.push(g); }
+      counts[g]++;
+    }
+    var nFav = 0;
+    for (var j = 0; j < state.channels.length; j++) if (state.favs[state.channels[j].url]) nFav++;
+    var html = grpHtml(ALL, state.channels.length) + grpHtml(FAV, nFav) + grpHtml(RECENT, state.recent.length);
+    for (var k = 0; k < order.length; k++) html += grpHtml(order[k], counts[order[k]]);
+    $('groups').innerHTML = html;
+  }
+  function grpHtml(name, n) {
+    return '<div class="grp' + (name === state.group ? ' on' : '') + '" data-g="' + esc(name) + '">' +
+      esc(name) + '<span class="n">' + n + '</span></div>';
+  }
+  function setGroup(g) {
+    var exists = g === ALL || g === FAV || g === RECENT;
+    for (var i = 0; !exists && i < state.channels.length; i++) if (state.channels[i].group === g) exists = true;
+    state.group = exists ? g : ALL;
+    if (state.group !== FAV && state.group !== RECENT) { state.lastGroup = state.group; store.set('lastGroup', state.group); }
+    var els = $('groups').children;
+    for (var j = 0; j < els.length; j++) els[j].className = 'grp' + (els[j].getAttribute('data-g') === state.group ? ' on' : '');
+    filter();
+  }
+
+  /* ---------- liste ---------- */
+  function filter() {
+    var q = fold($('search').value.trim()), g = state.group, res = [];
+    var src = state.channels;
+    if (g === RECENT) {
+      var byUrl = {};
+      for (var a = 0; a < src.length; a++) byUrl[src[a].url] = src[a];
+      src = [];
+      for (var b = 0; b < state.recent.length; b++) if (byUrl[state.recent[b]]) src.push(byUrl[state.recent[b]]);
+    }
+    for (var i = 0; i < src.length; i++) {
+      var c = src[i];
+      if (g === FAV && !state.favs[c.url]) continue;
+      if (g !== ALL && g !== FAV && g !== RECENT && c.group !== g) continue;
+      if (q && c.key.indexOf(q) === -1) continue;
+      res.push(c);
+    }
+    state.filtered = res;
+    state.shown = 0;
+    $('list').innerHTML = '';
+    $('list').scrollTop = 0;
+    if (!state.channels.length) {
+      $('list').innerHTML = '<div class="empty">Henüz liste yok.<br>Sol alttaki <b>&#9881; Listeler</b> düğmesinden M3U adresi veya Xtream bilgilerinizi ekleyin.</div>';
+      return;
+    }
+    if (!res.length) { $('list').innerHTML = '<div class="empty">Kanal bulunamadı.</div>'; return; }
+    renderMore();
+  }
+
+  function renderMore() {
+    var list = $('list'), more = $('more');
+    if (more) list.removeChild(more);
+    var end = Math.min(state.shown + PAGE, state.filtered.length), html = '';
+    for (var i = state.shown; i < end; i++) {
+      var c = state.filtered[i];
+      html += '<div class="ch' + (state.playing && state.playing.url === c.url ? ' on' : '') + '" data-i="' + i + '">' +
+        (c.logo ? '<img src="' + esc(c.logo) + '" onerror="this.style.visibility=\'hidden\'">' : '<div class="ph"></div>') +
+        '<div class="t"><b>' + esc(c.name) + '</b><small>' + esc(c.group) + '</small></div>' +
+        '<div class="fav' + (state.favs[c.url] ? ' y' : '') + '" data-f="' + i + '">' + (state.favs[c.url] ? '★' : '☆') + '</div></div>';
+    }
+    var tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    var frag = document.createDocumentFragment();
+    while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+    list.appendChild(frag);
+    state.shown = end;
+    if (end < state.filtered.length) {
+      var m = document.createElement('div');
+      m.id = 'more';
+      m.textContent = (state.filtered.length - end) + ' kanal daha — kaydırın';
+      list.appendChild(m);
+    }
+  }
+
+  /* ---------- oynatma ---------- */
+  var video = $('video');
+  function play(c) {
+    state.playing = c;
+    $('nowName').textContent = c.name;
+    $('msg').textContent = 'Yükleniyor...';
+    $('msg').style.display = 'block';
+    video.src = c.url;
+    video.load();
+    var pr = video.play();
+    if (pr && pr['catch']) pr['catch'](function () {});
+    var r = state.recent, idx = r.indexOf(c.url);
+    if (idx > -1) r.splice(idx, 1);
+    r.unshift(c.url);
+    if (r.length > 30) r.length = 30;
+    store.set('recent', r);
+    store.set('lastPlayed', c.url);
+    var rows = $('list').querySelectorAll('.ch');
+    for (var i = 0; i < rows.length; i++) {
+      var rc = state.filtered[+rows[i].getAttribute('data-i')];
+      rows[i].className = 'ch' + (rc && rc.url === c.url ? ' on' : '');
+    }
+  }
+  function step(d) {
+    var f = state.filtered;
+    if (!f.length) return;
+    var i = -1;
+    if (state.playing) for (var k = 0; k < f.length; k++) if (f[k].url === state.playing.url) { i = k; break; }
+    i = (i + d + f.length) % f.length;
+    play(f[i]);
+  }
+  video.addEventListener('playing', function () { $('msg').style.display = 'none'; });
+  video.addEventListener('waiting', function () { $('msg').textContent = 'Arabelleğe alınıyor...'; $('msg').style.display = 'block'; });
+  video.addEventListener('error', function () {
+    if (!state.playing) return;
+    var ts = /\.ts(\?|$)/.test(state.playing.url);
+    $('msg').textContent = 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kanal kapalı veya format desteklenmiyor olabilir.');
+    $('msg').style.display = 'block';
+  });
+
+  /* ---------- olaylar ---------- */
+  $('groups').addEventListener('click', function (e) {
+    var t = e.target;
+    while (t && t !== this && !t.getAttribute('data-g')) t = t.parentNode;
+    if (t && t.getAttribute && t.getAttribute('data-g') !== null) setGroup(t.getAttribute('data-g'));
+  });
+  $('list').addEventListener('click', function (e) {
+    var t = e.target;
+    if (t.getAttribute('data-f') !== null) {
+      var c = state.filtered[+t.getAttribute('data-f')];
+      if (state.favs[c.url]) delete state.favs[c.url]; else state.favs[c.url] = 1;
+      store.set('favs', state.favs);
+      t.className = 'fav' + (state.favs[c.url] ? ' y' : '');
+      t.textContent = state.favs[c.url] ? '★' : '☆';
+      var fg = $('groups').querySelector('[data-g="' + FAV + '"] .n');
+      if (fg) fg.textContent = Object.keys(state.favs).length;
+      return;
+    }
+    while (t && t !== this && t.getAttribute('data-i') === null) t = t.parentNode;
+    if (t && t !== this) play(state.filtered[+t.getAttribute('data-i')]);
+  });
+  $('list').addEventListener('scroll', function () {
+    if (state.shown < state.filtered.length && this.scrollTop + this.clientHeight > this.scrollHeight - 400) renderMore();
+  });
+  var sTimer;
+  $('search').addEventListener('input', function () { clearTimeout(sTimer); sTimer = setTimeout(filter, 250); });
+  $('btnPrev').addEventListener('click', function () { step(-1); });
+  $('btnNext').addEventListener('click', function () { step(1); });
+  $('btnBig').addEventListener('click', function () {
+    var w = $('playerWrap'), big = w.className !== 'big';
+    w.className = big ? 'big' : '';
+    $('tools').style.display = $('list').style.display = big ? 'none' : '';
+    this.textContent = big ? 'Küçült' : 'Büyüt';
+  });
+  $('btnFull').addEventListener('click', function () {
+    if (video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); } catch (e) {} }
+    else if (video.requestFullscreen) video.requestFullscreen();
+  });
+
+  /* ---------- ayarlar ---------- */
+  var addType = 'pUrl';
+  function renderPlaylists() {
+    var h = '';
+    if (!state.playlists.length) h = '<div class="note">Kayıtlı liste yok.</div>';
+    for (var i = 0; i < state.playlists.length; i++) {
+      var p = state.playlists[i];
+      h += '<div class="pl"><span class="' + (p.id === state.current ? 'cur' : '') + '">' + esc(p.name) +
+        ' <small style="color:#777">(' + (p.type === 'xt' ? 'Xtream' : p.type === 'txt' ? 'metin' : 'URL') + ')</small></span>' +
+        '<button data-load="' + p.id + '">Aç</button>' +
+        (p.type !== 'txt' ? '<button data-ref="' + p.id + '">Yenile</button>' : '') +
+        '<button class="danger" data-del="' + p.id + '">Sil</button></div>';
+    }
+    $('plList').innerHTML = h;
+  }
+  function findPl(id) { for (var i = 0; i < state.playlists.length; i++) if (state.playlists[i].id === id) return state.playlists[i]; return null; }
+  function openSetup() { renderPlaylists(); status(''); $('setup').className = 'show'; }
+  function closeSetup() { $('setup').className = ''; }
+  function doLoad(p) {
+    status('Yükleniyor: ' + p.name + ' ...');
+    loadPlaylist(p, function (err, n) {
+      renderPlaylists();
+      if (err && !state.channels.length) { status(err); return; }
+      if (err) { status(err); return; }
+      status(n + ' kanal yüklendi.');
+      setTimeout(closeSetup, 600);
+    });
+  }
+
+  $('btnSetup').addEventListener('click', openSetup);
+  $('btnClose').addEventListener('click', closeSetup);
+  var tabBtns = document.querySelectorAll('.tabs button');
+  for (var tb = 0; tb < tabBtns.length; tb++) tabBtns[tb].addEventListener('click', function () {
+    addType = this.getAttribute('data-p');
+    for (var i = 0; i < tabBtns.length; i++) tabBtns[i].className = tabBtns[i] === this ? 'on' : '';
+    var panes = document.querySelectorAll('.pane');
+    for (var j = 0; j < panes.length; j++) panes[j].className = 'pane' + (panes[j].id === addType ? ' on' : '');
+  });
+  $('plList').addEventListener('click', function (e) {
+    var t = e.target, id;
+    if ((id = t.getAttribute('data-load')) || (id = t.getAttribute('data-ref'))) { var p = findPl(id); if (p) doLoad(p); }
+    else if ((id = t.getAttribute('data-del'))) {
+      if (!confirm('Bu liste silinsin mi?')) return;
+      state.playlists = state.playlists.filter(function (x) { return x.id !== id; });
+      store.set('playlists', state.playlists);
+      try { localStorage.removeItem('iptv_cache_' + id); } catch (er) {}
+      if (state.current === id) { state.current = null; store.set('current', null); state.channels = []; buildGroups(); filter(); }
+      renderPlaylists();
+    }
+  });
+  $('btnAdd').addEventListener('click', function () {
+    var name = $('plName').value.trim(), p = { id: 'p' + Date.now() };
+    if (addType === 'pUrl') {
+      var u = $('plUrl').value.trim();
+      if (!/^https?:\/\//i.test(u)) { status('Geçerli bir http(s) adresi girin.'); return; }
+      p.type = 'url'; p.url = u; p.name = name || u.replace(/^https?:\/\//, '').split('/')[0];
+    } else if (addType === 'pXt') {
+      p.type = 'xt'; p.server = $('xtServer').value.trim(); p.user = $('xtUser').value.trim(); p.pass = $('xtPass').value;
+      if (!/^https?:\/\//i.test(p.server) || !p.user) { status('Sunucu adresi (http://...) ve kullanıcı adı gerekli.'); return; }
+      p.name = name || p.user + ' @ ' + p.server.replace(/^https?:\/\//, '');
+    } else {
+      var txt = $('plText').value;
+      if (txt.indexOf('#EXT') === -1) { status('Metin #EXTM3U / #EXTINF satırları içermeli.'); return; }
+      p.type = 'txt'; p.text = txt; p.name = name || 'Yapıştırılan liste';
+    }
+    state.playlists.push(p);
+    if (!store.set('playlists', state.playlists)) status('Uyarı: cihaz hafızasına kaydedilemedi (Gizli sekme?).');
+    $('plName').value = $('plUrl').value = $('plText').value = $('xtPass').value = '';
+    doLoad(p);
+  });
+
+  /* ---------- başlangıç ---------- */
+  state.group = state.lastGroup || ALL;
+  var cur = findPl(state.current);
+  if (cur) {
+    // önce önbellekten anında aç, sonra arka planda güncelle
+    var cached = cur.type === 'txt' ? cur.text : store.get('cache_' + cur.id, null);
+    if (cached) {
+      state.channels = parseM3U(cached, cur.type === 'xt' || cur.fixTs !== false);
+      buildGroups(); setGroup(state.group);
+    } else { buildGroups(); filter(); }
+    if (cur.type !== 'txt') loadPlaylist(cur, function () {});
+    var last = store.get('lastPlayed', null);
+    for (var i = 0; last && i < state.channels.length; i++) if (state.channels[i].url === last) {
+      state.playing = state.channels[i]; $('nowName').textContent = state.channels[i].name;
+      $('msg').textContent = 'Son izlenen: ' + state.channels[i].name + ' — oynatmak için listeden dokunun';
+      break;
+    }
+  } else {
+    buildGroups(); filter(); openSetup();
+  }
+})();
+</script>
+</body>
+</html>
