@@ -160,6 +160,12 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       <button id="btnClose">Kapat</button>
     </div>
     <div id="status"></div>
+
+    <h3>Proxy adresi (isteğe bağlı)</h3>
+    <div class="row"><label>Liste indirilemezse bu adres üzerinden indirilir (kendi Cloudflare Worker'ınız)</label>
+      <input type="url" id="proxyUrl" placeholder="https://iptv-proxy.KULLANICI.workers.dev" autocapitalize="off" autocorrect="off"></div>
+    <div class="btns"><button id="btnProxy">Proxy'yi kaydet</button></div>
+
     <div class="note">
       Not: iPad yalnızca HLS (.m3u8) ve MP4 yayınlarını doğrudan oynatır. .ts (MPEG-TS) linkli
       Xtream listelerinde uygulama linkleri otomatik olarak .m3u8'e çevirir.<br>
@@ -247,22 +253,37 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   }
 
   /* ---------- yükleme ---------- */
-  function fetchText(url, cb) {
+  function xhr(url, cb) {
     var x = new XMLHttpRequest();
     x.open('GET', url, true);
-    x.timeout = 45000;
+    x.timeout = 60000;
     x.onload = function () {
       if (x.status >= 200 && x.status < 300 && x.responseText) cb(null, x.responseText);
-      else cb('Sunucu hata döndü (' + x.status + ')');
+      else cb('Sunucu hata döndü (' + x.status + ')', x.status);
     };
-    x.onerror = function () {
-      var hint = (location.protocol === 'https:' && url.indexOf('http:') === 0)
-        ? ' Sayfa https, liste http — Safari bunu engeller. Sayfayı http üzerinden açın veya metin yapıştırın.'
-        : ' Sunucu CORS izni vermiyor olabilir; "Metin yapıştır" seçeneğini deneyin.';
-      cb('Liste indirilemedi.' + hint);
-    };
+    x.onerror = function () { cb('net'); };
     x.ontimeout = function () { cb('Zaman aşımı.'); };
     x.send();
+  }
+
+  // Önce doğrudan dener; tarayıcı engellerse (CORS / http) kayıtlı proxy üzerinden dener.
+  function fetchText(url, cb) {
+    var proxy = store.get('proxy', '');
+    var mixed = location.protocol === 'https:' && url.indexOf('http:') === 0;
+    function viaProxy() {
+      xhr(proxy + (proxy.indexOf('?') > -1 ? '&' : '?') + 'url=' + encodeURIComponent(url), function (err) {
+        if (!err) { cb.apply(null, arguments); return; }
+        cb(err === 'net' ? 'Proxy adresine ulaşılamadı. Proxy adresini kontrol edin.' : 'Proxy: ' + err);
+      });
+    }
+    if (proxy && mixed) { viaProxy(); return; }   // http liste https sayfada zaten engellenir
+    xhr(url, function (err, text) {
+      if (!err) { cb(null, text); return; }
+      if (err !== 'net') { cb(err); return; }
+      if (proxy) { viaProxy(); return; }
+      cb('Liste indirilemedi: tarayıcı engelledi (' + (mixed ? 'https sayfada http liste' : 'sunucu CORS izni vermiyor') +
+        '). Aşağıdaki "Proxy adresi" alanını doldurun veya "Metin yapıştır" seçeneğini kullanın.');
+    });
   }
 
   function playlistUrl(p) {
@@ -489,6 +510,14 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     });
   }
 
+  $('proxyUrl').value = store.get('proxy', '');
+  $('btnProxy').addEventListener('click', function () {
+    var v = $('proxyUrl').value.trim().replace(/\/+$/, '');
+    if (v && !/^https:\/\//i.test(v)) { status('Proxy adresi https:// ile başlamalı.'); return; }
+    store.set('proxy', v);
+    $('proxyUrl').value = v;
+    status(v ? 'Proxy kaydedildi. Şimdi listeyi "Aç" veya "Yenile" ile tekrar yükleyin.' : 'Proxy kaldırıldı.');
+  });
   $('btnSetup').addEventListener('click', openSetup);
   $('btnClose').addEventListener('click', closeSetup);
   var tabBtns = document.querySelectorAll('.tabs button');
