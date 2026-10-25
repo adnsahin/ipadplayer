@@ -175,6 +175,11 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       <input type="url" id="proxyUrl" placeholder="https://iptv-proxy.KULLANICI.workers.dev" autocapitalize="off" autocorrect="off"></div>
     <div class="btns"><button id="btnProxy">Proxy'yi kaydet</button></div>
 
+    <h3>MKV dönüştürücü (ev bilgisayarı)</h3>
+    <div class="row"><label>Bilgisayarda IPTV_BASLAT.bat açıkken penceresinde yazan adres. MKV/AVI filmler bu bilgisayar üzerinden oynatılır.</label>
+      <input type="url" id="convUrl" placeholder="http://192.168.1.100:8795" autocapitalize="off" autocorrect="off"></div>
+    <div class="btns"><button id="btnConv">Kaydet ve dene</button></div>
+
     <div class="note">
       Not: iPad yalnızca HLS (.m3u8) ve MP4 yayınlarını doğrudan oynatır. .ts (MPEG-TS) linkli
       Xtream listelerinde uygulama linkleri otomatik olarak .m3u8'e çevirir.<br>
@@ -219,7 +224,9 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     mode: 'live',                            // live | vod | series
     byMode: { live: null, vod: null, series: null },
     series: null,                            // bölümleri açık olan dizi
-    pos: store.get('pos', {})                // film/bölüm kaldığı yer: url -> saniye
+    pos: store.get('pos', {}),               // film/bölüm kaldığı yer: url -> saniye
+    converted: false,                        // oynayan içerik ev bilgisayarında dönüştürülüyor mu
+    offset: 0                                // dönüştürmenin başladığı saniye
   };
 
   function $(id) { return document.getElementById(id); }
@@ -579,6 +586,10 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   var video = $('video');
   // iPad Safari'nin kendi oynatıcısının açabildiği biçimler
   function isNative(c) { return !c.ext || /^(mp4|m4v|mov|m3u8)$/.test(c.ext); }
+  // MKV dönüştürücü: ayarlardaki adres, yoksa sayfa zaten ev sunucusundan açıldıysa kendisi
+  function convBase() {
+    return store.get('conv', '') || (location.port === '8795' ? location.protocol + '//' + location.host : '');
+  }
 
   function play(c) {
     if (c.seriesId) { openSeries(c); return; }
@@ -586,9 +597,18 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     $('nowName').textContent = c.name;
     $('btnVlc').style.display = '';
     $('msg').style.display = 'block';
-    if (isNative(c)) {
-      $('msg').textContent = 'Yükleniyor...';
-      video.src = c.url;
+    var conv = isNative(c) ? '' : convBase();
+    state.converted = !!conv;
+    state.offset = 0;
+    if (isNative(c) || conv) {
+      var src = c.url;
+      if (conv) {
+        // dönüştürülen akış 0'dan başlar; kaldığı yer sunucuya baştan verilir
+        state.offset = state.pos[c.url] > 30 ? state.pos[c.url] : 0;
+        src = conv + '/hls/start?url=' + encodeURIComponent(c.url) + '&t=' + state.offset;
+      }
+      $('msg').textContent = conv ? 'Bilgisayar ' + c.ext.toUpperCase() + ' filmi hazırlıyor, birkaç saniye sürebilir...' : 'Yükleniyor...';
+      video.src = src;
       video.load();
       var pr = video.play();
       if (pr && pr['catch']) pr['catch'](function () {});
@@ -597,8 +617,8 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       video.pause();
       video.removeAttribute('src');
       video.load();
-      $('msg').textContent = 'Bu içerik ' + c.ext.toUpperCase() + ' biçiminde; iPad tarayıcısı oynatamaz. ' +
-        'Aşağıdaki "VLC\'de aç" düğmesine dokunun.';
+      $('msg').textContent = 'Bu içerik ' + c.ext.toUpperCase() + ' biçiminde; iPad tarayıcısı tek başına oynatamaz. ' +
+        'Evdeyseniz Listeler ekranından "MKV dönüştürücü" adresini girin ya da "VLC\'de aç" düğmesine dokunun.';
     }
     var r = state.recent, idx = r.indexOf(c.url);
     if (idx > -1) r.splice(idx, 1);
@@ -623,7 +643,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   video.addEventListener('playing', function () { $('msg').style.display = 'none'; });
   // Film ve bölümlerde kaldığı yerden devam
   video.addEventListener('loadedmetadata', function () {
-    var c = state.playing, t = c && c.ext && state.pos[c.url];
+    var c = state.playing, t = c && c.ext && !state.converted && state.pos[c.url];
     if (t && t > 30 && (!video.duration || t < video.duration - 60)) {
       try { video.currentTime = t; } catch (e) {}
     }
@@ -633,8 +653,8 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     var c = state.playing;
     if (!c || !c.ext || Date.now() - lastSave < 10000) return;
     lastSave = Date.now();
-    var t = video.currentTime;
-    if (video.duration && t > video.duration - 60) delete state.pos[c.url]; else state.pos[c.url] = Math.floor(t);
+    var t = state.offset + video.currentTime;
+    if (!state.converted && video.duration && t > video.duration - 60) delete state.pos[c.url]; else state.pos[c.url] = Math.floor(t);
     var keys = Object.keys(state.pos);
     if (keys.length > 100) delete state.pos[keys[0]];
     store.set('pos', state.pos);
@@ -644,6 +664,11 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     if (!state.playing) return;
     var c = state.playing, ts = /\.ts(\?|$)/.test(c.url);
     var badExt = c.ext && !/^(mp4|m4v|mov|m3u8)$/.test(c.ext);
+    if (state.converted) {
+      $('msg').textContent = 'Bilgisayardaki dönüştürücü filmi açamadı. IPTV_BASLAT.bat açık mı ve iPad aynı Wi-Fi\'da mı? "VLC\'de aç" ile de deneyebilirsiniz.';
+      $('msg').style.display = 'block';
+      return;
+    }
     $('msg').textContent = badExt
       ? 'Bu içerik .' + c.ext + ' formatında; iPad Safari yalnızca MP4 oynatabilir. "VLC\'de aç" düğmesini kullanın.'
       : 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kapalı olabilir veya format desteklenmiyor; "VLC\'de aç" düğmesini deneyin.');
@@ -730,6 +755,22 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     });
   }
 
+  $('convUrl').value = store.get('conv', '');
+  $('btnConv').addEventListener('click', function () {
+    var v = $('convUrl').value.trim().replace(/\/+$/, '');
+    if (v && !/^https?:\/\//i.test(v)) v = 'http://' + v;
+    if (v && !/:\d+$/.test(v)) v += ':8795';
+    store.set('conv', v);
+    $('convUrl').value = v;
+    if (!v) { status('Dönüştürücü adresi kaldırıldı.'); return; }
+    status('Bilgisayara bağlanılıyor...');
+    var x = new XMLHttpRequest();
+    x.open('GET', v + '/hls/ping', true);
+    x.timeout = 8000;
+    x.onload = function () { status(x.status === 200 ? 'Bağlantı tamam. MKV filmler artık bu bilgisayar üzerinden oynatılacak.' : 'Bilgisayar yanıt verdi ama dönüştürücü değil (' + x.status + ').'); };
+    x.onerror = x.ontimeout = function () { status('Bilgisayara ulaşılamadı. IPTV_BASLAT.bat açık mı, adres doğru mu, iPad aynı Wi-Fi\'da mı?'); };
+    x.send();
+  });
   $('proxyUrl').value = store.get('proxy', '');
   $('btnProxy').addEventListener('click', function () {
     var v = $('proxyUrl').value.trim().replace(/\/+$/, '');

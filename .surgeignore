@@ -1,2 +1,4 @@
 IPTV_BASLAT.bat
 cloudflare-worker.js
+server.py
+__pycache__
