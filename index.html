@@ -54,6 +54,9 @@ video { width: 100%; height: 100%; background: #000; display: block; }
 
 #tools { padding: 8px; display: -webkit-flex; display: flex; border-bottom: 1px solid #262626; }
 #search { -webkit-flex: 1; flex: 1; }
+#modes { display: -webkit-flex; display: flex; margin-right: 8px; }
+#modes button { margin-right: 4px; padding: 7px 10px; }
+#modes button.on { background: #1e6fd9; border-color: #1e6fd9; color: #fff; }
 #list { -webkit-flex: 1; flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .ch { display: -webkit-flex; display: flex; -webkit-align-items: center; align-items: center;
   padding: 7px 10px; border-bottom: 1px solid #1f1f1f; }
@@ -127,6 +130,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       <button id="btnFull">Tam ekran</button>
     </div>
     <div id="tools">
+      <div id="modes" style="display:none"><button data-m="live" class="on">Canlı</button><button data-m="vod">Filmler</button><button data-m="series">Diziler</button></div>
       <input type="text" id="search" placeholder="Kanal ara..." autocomplete="off" autocorrect="off" autocapitalize="off">
     </div>
     <div id="list"></div>
@@ -188,7 +192,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   // http IPTV sunucuları yalnızca http sayfadan erişilebilir (https sayfada Safari engeller)
   var HTTP_HOME = 'http://ipadplayer.surge.sh/';
   var PAGE = 150;          // tek seferde çizilen kanal sayısı (eski iPad'ler için)
-  var FAV = '★ Favoriler', ALL = 'Tümü', RECENT = 'Son izlenen';
+  var FAV = '★ Favoriler', ALL = 'Tümü', RECENT = 'Son izlenen', BACK = '◀ Tüm diziler';
 
   var store = {
     get: function (k, d) {
@@ -209,7 +213,12 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     filtered: [],
     shown: 0,
     group: ALL,
-    playing: null
+    playing: null,
+    xt: null,                                // Xtream hesabı (film/dizi için)
+    mode: 'live',                            // live | vod | series
+    byMode: { live: null, vod: null, series: null },
+    series: null,                            // bölümleri açık olan dizi
+    pos: store.get('pos', {})                // film/bölüm kaldığı yer: url -> saniye
   };
 
   function $(id) { return document.getElementById(id); }
@@ -307,25 +316,38 @@ video { width: 100%; height: 100%; background: #000; display: block; }
 
   // Xtream: get.php çoğu sunucuda CORS izni vermez, player_api.php ise verir.
   // Kanalları JSON API'den alıp M3U metnine çeviriyoruz (önbellek ve ayrıştırma aynı kalsın).
+  function xtBase(x) { return x.server.replace(/\/+$/, ''); }
+  function xtPath(x, kind) {  // kind: live | movie | series
+    return xtBase(x) + '/' + kind + '/' + encodeURIComponent(x.user) + '/' + encodeURIComponent(x.pass) + '/';
+  }
+  // player_api.php çağrısı; hata metniyle ya da ayrıştırılmış JSON ile döner
+  function xtApi(x, action, cb) {
+    var url = xtBase(x) + '/player_api.php?username=' + encodeURIComponent(x.user) +
+      '&password=' + encodeURIComponent(x.pass) + (action ? '&action=' + action : '');
+    fetchText(url, function (err, text) {
+      if (err) { cb(err); return; }
+      var data;
+      try { data = JSON.parse(text); } catch (e) { cb('Sunucudan geçersiz yanıt geldi.'); return; }
+      cb(null, data);
+    });
+  }
+  function catNames(cats) {
+    var m = {};
+    for (var i = 0; cats && i < cats.length; i++) m[cats[i].category_id] = cats[i].category_name;
+    return m;
+  }
+
   function fetchXtream(x, cb) {
-    var base = x.server.replace(/\/+$/, '');
-    var api = base + '/player_api.php?username=' + encodeURIComponent(x.user) + '&password=' + encodeURIComponent(x.pass);
     function getJson(action, next) {
-      fetchText(api + (action ? '&action=' + action : ''), function (err, text) {
-        if (err) { cb(err); return; }
-        var data;
-        try { data = JSON.parse(text); } catch (e) { cb('Sunucudan geçersiz yanıt geldi.'); return; }
-        next(data);
-      });
+      xtApi(x, action, function (err, data) { if (err) cb(err); else next(data); });
     }
     getJson('', function (info) {
       if (!info || !info.user_info || String(info.user_info.auth) !== '1') { cb('Kullanıcı adı veya şifre hatalı.'); return; }
       if (info.user_info.status && info.user_info.status !== 'Active') { cb('Hesap durumu: ' + info.user_info.status); return; }
       getJson('get_live_categories', function (cats) {
-        var catName = {};
-        for (var i = 0; cats && i < cats.length; i++) catName[cats[i].category_id] = cats[i].category_name;
+        var catName = catNames(cats);
         getJson('get_live_streams', function (streams) {
-          var out = ['#EXTM3U'], pre = base + '/live/' + encodeURIComponent(x.user) + '/' + encodeURIComponent(x.pass) + '/';
+          var out = ['#EXTM3U'], pre = xtPath(x, 'live');
           for (var j = 0; streams && j < streams.length; j++) {
             var s = streams[j], nm = String(s.name || 'Adsız').replace(/[\r\n]/g, ' ');
             out.push('#EXTINF:-1 tvg-logo="' + String(s.stream_icon || '').replace(/"/g, '') + '" group-title="' +
@@ -338,6 +360,51 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     });
   }
 
+  // Filmler (vod) ve Diziler (series) kataloğu — yalnızca Xtream hesaplarında
+  function fetchCatalog(x, mode, cb) {
+    var vod = mode === 'vod';
+    xtApi(x, vod ? 'get_vod_categories' : 'get_series_categories', function (err, cats) {
+      if (err) { cb(err); return; }
+      var catName = catNames(cats);
+      xtApi(x, vod ? 'get_vod_streams' : 'get_series', function (err2, arr) {
+        if (err2) { cb(err2); return; }
+        var out = [], pre = xtPath(x, 'movie');
+        for (var i = 0; arr && i < arr.length; i++) {
+          var s = arr[i], nm = String(s.name || 'Adsız');
+          var c = { name: nm, logo: s.stream_icon || s.cover || '', group: catName[s.category_id] || 'Diğer', key: fold(nm) };
+          if (vod) {
+            c.ext = String(s.container_extension || 'mp4').toLowerCase();
+            c.url = pre + s.stream_id + '.' + c.ext;
+          } else {
+            c.seriesId = s.series_id;
+            c.url = 'series:' + xtBase(x) + ':' + s.series_id;   // favoriler için sabit anahtar
+          }
+          out.push(c);
+        }
+        cb(null, out);
+      });
+    });
+  }
+
+  function fetchEpisodes(x, show, cb) {
+    xtApi(x, 'get_series_info&series_id=' + encodeURIComponent(show.seriesId), function (err, info) {
+      if (err) { cb(err); return; }
+      var eps = (info && info.episodes) || {}, seasons = [], out = [], pre = xtPath(x, 'series');
+      for (var k in eps) if (eps.hasOwnProperty(k)) seasons.push(k);
+      seasons.sort(function (a, b) { return a - b; });
+      for (var i = 0; i < seasons.length; i++) {
+        var list = eps[seasons[i]] || [];
+        for (var j = 0; j < list.length; j++) {
+          var e = list[j], ext = String(e.container_extension || 'mp4').toLowerCase();
+          var nm = e.title || (show.name + ' ' + (e.episode_num || j + 1) + '. bölüm');
+          out.push({ name: nm, logo: (e.info && e.info.movie_image) || show.logo, group: 'Sezon ' + (e.season || seasons[i]),
+            url: pre + e.id + '.' + ext, ext: ext, key: fold(nm) });
+        }
+      }
+      cb(null, out);
+    });
+  }
+
   function loadPlaylist(p, done) {
     function apply(text) {
       if (text.indexOf('#EXT') === -1) { done('Bu bir M3U listesi gibi görünmüyor.'); return; }
@@ -345,13 +412,21 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       if (p.type !== 'txt' && state.current === p.id && state.channels.length && store.get('cache_' + p.id, null) === text) {
         done(null, state.channels.length); return;
       }
-      state.channels = parseM3U(text, p.type === 'xt' || p.fixTs !== false);
-      state.current = p.id; store.set('current', p.id);
+      var live = parseM3U(text, p.type === 'xt' || p.fixTs !== false);
       // büyük listeleri cihazda önbelleğe al (sığarsa)
       if (p.type !== 'txt') store.set('cache_' + p.id, text);
+      if (state.current === p.id && state.mode !== 'live') {  // arka plan yenilemesi; film/dizi ekranını bozma
+        state.byMode.live = live; done(null, live.length); return;
+      }
+      state.current = p.id; store.set('current', p.id);
+      state.xt = xt || null;
+      state.byMode = { live: live, vod: null, series: null };
+      state.mode = 'live'; state.series = null;
+      updateModes();
+      state.channels = live;
       buildGroups();
       setGroup(state.group === FAV || state.group === RECENT ? state.group : (state.lastGroup || ALL));
-      done(null, state.channels.length);
+      done(null, live.length);
     }
     if (p.type === 'txt') { apply(p.text); return; }
     function got(err, text) {
@@ -365,6 +440,51 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     var xt = p.type === 'xt' ? p : xtreamFromUrl(p.url);
     if (xt) fetchXtream(xt, got); else fetchText(p.url, got);
   }
+  function xtOf(p) { return !p ? null : p.type === 'xt' ? p : p.type === 'url' ? xtreamFromUrl(p.url) : null; }
+
+  /* ---------- Canlı / Filmler / Diziler ---------- */
+  var MODE_HINT = { live: 'Kanal ara...', vod: 'Film ara...', series: 'Dizi ara...' };
+  function updateModes() {
+    $('modes').style.display = state.xt ? '' : 'none';
+    var b = $('modes').children;
+    for (var i = 0; i < b.length; i++) b[i].className = b[i].getAttribute('data-m') === state.mode ? 'on' : '';
+    $('search').placeholder = state.series ? 'Bölüm ara...' : MODE_HINT[state.mode];
+  }
+  function showItems(items) {
+    state.channels = items;
+    state.group = ALL;
+    buildGroups();
+    setGroup(state.mode === 'live' ? (state.lastGroup || ALL) : ALL);
+  }
+  function setMode(m) {
+    if (m !== 'live' && !state.xt) return;
+    state.mode = m; state.series = null;
+    $('search').value = '';
+    updateModes();
+    if (state.byMode[m]) { showItems(state.byMode[m]); return; }
+    state.channels = []; buildGroups();
+    $('list').innerHTML = '<div class="empty">' + (m === 'vod' ? 'Filmler' : 'Diziler') + ' yükleniyor...<br>Büyük arşivlerde biraz sürebilir.</div>';
+    fetchCatalog(state.xt, m, function (err, items) {
+      if (state.mode !== m || state.series) return;   // bu arada başka sekmeye geçildi
+      if (err) { $('list').innerHTML = '<div class="empty">' + esc(err) + '</div>'; return; }
+      state.byMode[m] = items;
+      showItems(items);
+    });
+  }
+  function openSeries(show) {
+    var x = state.xt;
+    state.series = show;
+    $('search').value = '';
+    updateModes();
+    state.channels = []; buildGroups();
+    $('list').innerHTML = '<div class="empty">' + esc(show.name) + ' bölümleri yükleniyor...</div>';
+    fetchEpisodes(x, show, function (err, eps) {
+      if (state.series !== show) return;
+      if (err) { $('list').innerHTML = '<div class="empty">' + esc(err) + '</div>'; return; }
+      if (!eps.length) { $('list').innerHTML = '<div class="empty">Bu dizide bölüm bulunamadı.</div>'; return; }
+      showItems(eps);
+    });
+  }
 
   /* ---------- gruplar ---------- */
   function buildGroups() {
@@ -376,7 +496,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     }
     var nFav = 0;
     for (var j = 0; j < state.channels.length; j++) if (state.favs[state.channels[j].url]) nFav++;
-    var html = grpHtml(ALL, state.channels.length) + grpHtml(FAV, nFav) + grpHtml(RECENT, state.recent.length);
+    var html = (state.series ? grpHtml(BACK, '') : '') + grpHtml(ALL, state.channels.length) + grpHtml(FAV, nFav) + grpHtml(RECENT, state.recent.length);
     for (var k = 0; k < order.length; k++) html += grpHtml(order[k], counts[order[k]]);
     $('groups').innerHTML = html;
   }
@@ -385,10 +505,11 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       esc(name) + '<span class="n">' + n + '</span></div>';
   }
   function setGroup(g) {
+    if (g === BACK) { setMode('series'); return; }
     var exists = g === ALL || g === FAV || g === RECENT;
     for (var i = 0; !exists && i < state.channels.length; i++) if (state.channels[i].group === g) exists = true;
     state.group = exists ? g : ALL;
-    if (state.group !== FAV && state.group !== RECENT) { state.lastGroup = state.group; store.set('lastGroup', state.group); }
+    if (state.mode === 'live' && state.group !== FAV && state.group !== RECENT) { state.lastGroup = state.group; store.set('lastGroup', state.group); }
     var els = $('groups').children;
     for (var j = 0; j < els.length; j++) els[j].className = 'grp' + (els[j].getAttribute('data-g') === state.group ? ' on' : '');
     filter();
@@ -415,6 +536,10 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     state.shown = 0;
     $('list').innerHTML = '';
     $('list').scrollTop = 0;
+    if (!state.channels.length && (state.mode !== 'live' || state.series)) {
+      $('list').innerHTML = '<div class="empty">Bu bölümde içerik yok.</div>';
+      return;
+    }
     if (!state.channels.length) {
       $('list').innerHTML = '<div class="empty">Henüz liste yok.<br>Sol alttaki <b>&#9881; Listeler</b> düğmesinden M3U adresi veya Xtream bilgilerinizi ekleyin.</div>';
       return;
@@ -431,7 +556,8 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       var c = state.filtered[i];
       html += '<div class="ch' + (state.playing && state.playing.url === c.url ? ' on' : '') + '" data-i="' + i + '">' +
         (c.logo ? '<img src="' + esc(c.logo) + '" onerror="this.style.visibility=\'hidden\'">' : '<div class="ph"></div>') +
-        '<div class="t"><b>' + esc(c.name) + '</b><small>' + esc(c.group) + '</small></div>' +
+        '<div class="t"><b>' + esc(c.name) + '</b><small>' + esc(c.group) +
+        (c.ext ? ' · ' + esc(c.ext.toUpperCase()) : '') + (c.seriesId ? ' · bölümler &rsaquo;' : '') + '</small></div>' +
         '<div class="fav' + (state.favs[c.url] ? ' y' : '') + '" data-f="' + i + '">' + (state.favs[c.url] ? '★' : '☆') + '</div></div>';
     }
     var tmp = document.createElement('div');
@@ -443,7 +569,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     if (end < state.filtered.length) {
       var m = document.createElement('div');
       m.id = 'more';
-      m.textContent = (state.filtered.length - end) + ' kanal daha — kaydırın';
+      m.textContent = (state.filtered.length - end) + ' tane daha — kaydırın';
       list.appendChild(m);
     }
   }
@@ -451,6 +577,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   /* ---------- oynatma ---------- */
   var video = $('video');
   function play(c) {
+    if (c.seriesId) { openSeries(c); return; }
     state.playing = c;
     $('nowName').textContent = c.name;
     $('msg').textContent = 'Yükleniyor...';
@@ -477,14 +604,35 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     var i = -1;
     if (state.playing) for (var k = 0; k < f.length; k++) if (f[k].url === state.playing.url) { i = k; break; }
     i = (i + d + f.length) % f.length;
-    play(f[i]);
+    if (!f[i].seriesId) play(f[i]);
   }
   video.addEventListener('playing', function () { $('msg').style.display = 'none'; });
+  // Film ve bölümlerde kaldığı yerden devam
+  video.addEventListener('loadedmetadata', function () {
+    var c = state.playing, t = c && c.ext && state.pos[c.url];
+    if (t && t > 30 && (!video.duration || t < video.duration - 60)) {
+      try { video.currentTime = t; } catch (e) {}
+    }
+  });
+  var lastSave = 0;
+  video.addEventListener('timeupdate', function () {
+    var c = state.playing;
+    if (!c || !c.ext || Date.now() - lastSave < 10000) return;
+    lastSave = Date.now();
+    var t = video.currentTime;
+    if (video.duration && t > video.duration - 60) delete state.pos[c.url]; else state.pos[c.url] = Math.floor(t);
+    var keys = Object.keys(state.pos);
+    if (keys.length > 100) delete state.pos[keys[0]];
+    store.set('pos', state.pos);
+  });
   video.addEventListener('waiting', function () { $('msg').textContent = 'Arabelleğe alınıyor...'; $('msg').style.display = 'block'; });
   video.addEventListener('error', function () {
     if (!state.playing) return;
-    var ts = /\.ts(\?|$)/.test(state.playing.url);
-    $('msg').textContent = 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kanal kapalı veya format desteklenmiyor olabilir.');
+    var c = state.playing, ts = /\.ts(\?|$)/.test(c.url);
+    var badExt = c.ext && !/^(mp4|m4v|mov|m3u8)$/.test(c.ext);
+    $('msg').textContent = badExt
+      ? 'Bu içerik .' + c.ext + ' formatında; iPad Safari yalnızca MP4 oynatabilir. VLC veya Infuse gibi bir uygulama gerekir.'
+      : 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kapalı olabilir veya format desteklenmiyor.');
     $('msg').style.display = 'block';
   });
 
@@ -514,6 +662,10 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   });
   var sTimer;
   $('search').addEventListener('input', function () { clearTimeout(sTimer); sTimer = setTimeout(filter, 250); });
+  $('modes').addEventListener('click', function (e) {
+    var m = e.target.getAttribute && e.target.getAttribute('data-m');
+    if (m) setMode(m);
+  });
   $('btnPrev').addEventListener('click', function () { step(-1); });
   $('btnNext').addEventListener('click', function () { step(1); });
   $('btnBig').addEventListener('click', function () {
@@ -612,8 +764,10 @@ video { width: 100%; height: 100%; background: #000; display: block; }
   if (cur) {
     // önce önbellekten anında aç, sonra arka planda güncelle
     var cached = cur.type === 'txt' ? cur.text : store.get('cache_' + cur.id, null);
+    state.xt = xtOf(cur);
+    updateModes();
     if (cached) {
-      state.channels = parseM3U(cached, cur.type === 'xt' || cur.fixTs !== false);
+      state.channels = state.byMode.live = parseM3U(cached, cur.type === 'xt' || cur.fixTs !== false);
       buildGroups(); setGroup(state.group);
     } else { buildGroups(); filter(); }
     if (cur.type !== 'txt') loadPlaylist(cur, function () {});
