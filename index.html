@@ -126,6 +126,7 @@ video { width: 100%; height: 100%; background: #000; display: block; }
       <button id="btnPrev">&#9664;</button>
       <button id="btnNext">&#9654;</button>
       <div id="nowName">—</div>
+      <button id="btnVlc" style="display:none">VLC'de aç</button>
       <button id="btnBig">Büyüt</button>
       <button id="btnFull">Tam ekran</button>
     </div>
@@ -576,16 +577,29 @@ video { width: 100%; height: 100%; background: #000; display: block; }
 
   /* ---------- oynatma ---------- */
   var video = $('video');
+  // iPad Safari'nin kendi oynatıcısının açabildiği biçimler
+  function isNative(c) { return !c.ext || /^(mp4|m4v|mov|m3u8)$/.test(c.ext); }
+
   function play(c) {
     if (c.seriesId) { openSeries(c); return; }
     state.playing = c;
     $('nowName').textContent = c.name;
-    $('msg').textContent = 'Yükleniyor...';
+    $('btnVlc').style.display = '';
     $('msg').style.display = 'block';
-    video.src = c.url;
-    video.load();
-    var pr = video.play();
-    if (pr && pr['catch']) pr['catch'](function () {});
+    if (isNative(c)) {
+      $('msg').textContent = 'Yükleniyor...';
+      video.src = c.url;
+      video.load();
+      var pr = video.play();
+      if (pr && pr['catch']) pr['catch'](function () {});
+    } else {
+      // MKV/AVI vb. Safari'de hiç açılmaz; boşuna denemek yerine VLC'ye yönlendir
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      $('msg').textContent = 'Bu içerik ' + c.ext.toUpperCase() + ' biçiminde; iPad tarayıcısı oynatamaz. ' +
+        'Aşağıdaki "VLC\'de aç" düğmesine dokunun.';
+    }
     var r = state.recent, idx = r.indexOf(c.url);
     if (idx > -1) r.splice(idx, 1);
     r.unshift(c.url);
@@ -631,8 +645,8 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     var c = state.playing, ts = /\.ts(\?|$)/.test(c.url);
     var badExt = c.ext && !/^(mp4|m4v|mov|m3u8)$/.test(c.ext);
     $('msg').textContent = badExt
-      ? 'Bu içerik .' + c.ext + ' formatında; iPad Safari yalnızca MP4 oynatabilir. VLC veya Infuse gibi bir uygulama gerekir.'
-      : 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kapalı olabilir veya format desteklenmiyor.');
+      ? 'Bu içerik .' + c.ext + ' formatında; iPad Safari yalnızca MP4 oynatabilir. "VLC\'de aç" düğmesini kullanın.'
+      : 'Yayın açılamadı.' + (ts ? ' (.ts formatı iPad\'de oynamaz; sağlayıcıdan m3u8 isteyin)' : ' Kapalı olabilir veya format desteklenmiyor; "VLC\'de aç" düğmesini deneyin.');
     $('msg').style.display = 'block';
   });
 
@@ -673,6 +687,14 @@ video { width: 100%; height: 100%; background: #000; display: block; }
     w.className = big ? 'big' : '';
     $('tools').style.display = $('list').style.display = big ? 'none' : '';
     this.textContent = big ? 'Küçült' : 'Büyüt';
+  });
+  $('btnVlc').addEventListener('click', function () {
+    var c = state.playing;
+    if (!c) return;
+    video.pause();
+    $('msg').textContent = 'VLC açılıyor... Açılmadıysa iPad\'de VLC uygulaması yüklü değildir.';
+    $('msg').style.display = 'block';
+    location.href = 'vlc-x-callback://x-callback-url/stream?url=' + encodeURIComponent(c.url);
   });
   $('btnFull').addEventListener('click', function () {
     if (video.webkitEnterFullscreen) { try { video.webkitEnterFullscreen(); } catch (e) {} }
